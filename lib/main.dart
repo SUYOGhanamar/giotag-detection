@@ -5,6 +5,8 @@
 // =============================================================================
 
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:math';
 import 'dart:convert';
 import 'dart:ui' as ui;
@@ -681,6 +683,7 @@ class UploadScreen extends StatefulWidget {
 
 class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
   File? _image;
+  Uint8List? _imageBytes; // used for Image.memory on web
   late AnimationController _pulseCtrl;
   late Animation<double> _pulse;
 
@@ -717,11 +720,17 @@ class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
 
   Future<void> _pick(ImageSource src) async {
     final f = await ImagePicker().pickImage(source: src);
-    if (f != null) setState(() => _image = File(f.path));
+    if (f != null) {
+      final bytes = await f.readAsBytes();
+      setState(() {
+        _imageBytes = bytes;
+        if (!kIsWeb) _image = File(f.path);
+      });
+    }
   }
 
   Future<void> _analyze() async {
-    if (_image == null) return;
+    if (_imageBytes == null) return;
     final st = widget.appState;
     for (int i = 0; i < _steps.length; i++) {
       st.setScan(
@@ -731,7 +740,11 @@ class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
       );
       await Future.delayed(Duration(milliseconds: 400 + Random().nextInt(300)));
     }
-    final result = await AnalysisService.analyze(_image!, _image!.path.split('/').last);
+    final fileName = kIsWeb ? 'image.jpg' : _image!.path.split('/').last;
+    final result = await AnalysisService.analyze(
+      kIsWeb ? File('') : _image!,
+      fileName,
+    );
     if (StorageService.getAutoSave()) await StorageService.save(result);
     st.setScan(analyzing: false, progress: 0, label: '', step: 0);
     st.setResult(result);
@@ -789,7 +802,7 @@ class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
     return AnimatedBuilder(
       animation: _pulse,
       builder: (_, child) => Transform.scale(
-          scale: _image == null ? _pulse.value : 1.0, child: child),
+          scale: _imageBytes == null ? _pulse.value : 1.0, child: child),
       child: GestureDetector(
         onTap: _showPicker,
         child: Container(
@@ -798,11 +811,11 @@ class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
             color: C.surface,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: _image != null ? C.cyan : C.border,
-              width: _image != null ? 1.5 : 1.0,
+              color: _imageBytes != null ? C.cyan : C.border,
+              width: _imageBytes != null ? 1.5 : 1.0,
             ),
           ),
-          child: _image != null ? _imagePreview() : _dropHint(),
+          child: _imageBytes != null ? _imagePreview() : _dropHint(),
         ),
       ),
     );
@@ -812,7 +825,9 @@ class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
     return ClipRRect(
       borderRadius: BorderRadius.circular(17),
       child: Stack(fit: StackFit.expand, children: [
-        Image.file(_image!, fit: BoxFit.cover),
+        kIsWeb
+            ? Image.memory(_imageBytes!, fit: BoxFit.cover)
+            : Image.file(_image!, fit: BoxFit.cover),
         Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -843,7 +858,10 @@ class _UploadState extends State<UploadScreen> with TickerProviderStateMixin {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text('Image ready', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: C.t1)),
-                      Text(_image!.path.split('/').last,
+                      Text(
+                        kIsWeb
+                            ? 'Selected image'
+                            : _image!.path.split('/').last,
                           style: const TextStyle(fontSize: 11, color: C.t3),
                           maxLines: 1, overflow: TextOverflow.ellipsis),
                     ],

@@ -4,6 +4,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -45,6 +46,7 @@ class VerificationScreen extends StatefulWidget {
 class _VerificationScreenState extends State<VerificationScreen>
     with TickerProviderStateMixin {
   File? _selectedImage;
+  Uint8List? _imageBytes; // web-safe image data
   bool _isVerifying = false;
   VerificationReport? _report;
   String _scanStep = '';
@@ -97,8 +99,10 @@ class _VerificationScreenState extends State<VerificationScreen>
   Future<void> _pickImage(ImageSource source) async {
     final file = await ImagePicker().pickImage(source: source);
     if (file != null && mounted) {
+      final bytes = await file.readAsBytes();
       setState(() {
-        _selectedImage = File(file.path);
+        _imageBytes = bytes;
+        if (!kIsWeb) _selectedImage = File(file.path);
         _report = null;
         _verdictCtrl.reset();
       });
@@ -138,7 +142,7 @@ class _VerificationScreenState extends State<VerificationScreen>
   // ─── Verification Pipeline ──────────────────────────────────────────────────
 
   Future<void> _runVerification() async {
-    if (_selectedImage == null || _isVerifying) return;
+    if (_imageBytes == null || _isVerifying) return;
     setState(() {
       _isVerifying = true;
       _report = null;
@@ -158,9 +162,9 @@ class _VerificationScreenState extends State<VerificationScreen>
       await Future.delayed(Duration(milliseconds: 300 + Random().nextInt(250)));
     }
 
-    // Run actual verification
+    // Run actual verification (bytes already read during pick — works on web & mobile)
     try {
-      final bytes = await _selectedImage!.readAsBytes();
+      final bytes = _imageBytes!;
       final report = await VerificationService.verify(bytes);
       if (!mounted) return;
       setState(() {
@@ -288,7 +292,7 @@ class _VerificationScreenState extends State<VerificationScreen>
     return AnimatedBuilder(
       animation: _pulse,
       builder: (_, child) => Transform.scale(
-          scale: _selectedImage == null ? _pulse.value : 1.0, child: child),
+          scale: _imageBytes == null ? _pulse.value : 1.0, child: child),
       child: GestureDetector(
         onTap: _showPicker,
         child: Container(
@@ -298,11 +302,11 @@ class _VerificationScreenState extends State<VerificationScreen>
             color: _C.surface,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: _selectedImage != null ? _C.cyan : _C.border,
-              width: _selectedImage != null ? 1.5 : 1.0,
+              color: _imageBytes != null ? _C.cyan : _C.border,
+              width: _imageBytes != null ? 1.5 : 1.0,
             ),
           ),
-          child: _selectedImage != null
+          child: _imageBytes != null
               ? _imagePreview()
               : _dropHint(),
         ),
@@ -314,7 +318,9 @@ class _VerificationScreenState extends State<VerificationScreen>
     return ClipRRect(
       borderRadius: BorderRadius.circular(17),
       child: Stack(fit: StackFit.expand, children: [
-        Image.file(_selectedImage!, fit: BoxFit.cover),
+        kIsWeb
+            ? Image.memory(_imageBytes!, fit: BoxFit.cover)
+            : Image.file(_selectedImage!, fit: BoxFit.cover),
         Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -341,7 +347,8 @@ class _VerificationScreenState extends State<VerificationScreen>
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  _selectedImage!.path.split('/').last.split('\\').last,
+                  _selectedImage?.path.split('/').last.split('\\').last
+                      ?? 'Selected image',
                   style: const TextStyle(
                       fontSize: 12,
                       color: _C.t1,
